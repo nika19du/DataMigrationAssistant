@@ -26,7 +26,6 @@ The system helps users:
 - PostgreSQL
 - xUnit
 - Claude Code
-- GitHub Copilot
 - Ollama (DeepSeek-Coder-V2)
 
 ---
