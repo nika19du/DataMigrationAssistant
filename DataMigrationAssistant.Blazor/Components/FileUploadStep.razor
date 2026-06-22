@@ -1,0 +1,48 @@
+<div class="upload-step">
+    <h3>Upload Excel File</h3>
+    <p class="step-hint">Select an <code>.xlsx</code> file (max 50 MB).</p>
+
+    @if (!string.IsNullOrEmpty(_localError))
+    {
+        <div class="error-message">@_localError</div>
+    }
+
+    @if (!string.IsNullOrEmpty(ExternalError))
+    {
+        <div class="error-message">@ExternalError</div>
+    }
+
+    <div class="upload-dropzone">
+        <label class="file-label">
+            <InputFile OnChange="HandleChange" accept=".xlsx" disabled="@IsLoading" />
+        </label>
+
+        @if (IsLoading)
+        {
+            <div class="loading-inline">Uploading and reading sheets…</div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public EventCallback<IBrowserFile> OnFileSelected { get; set; }
+    [Parameter] public string? ExternalError { get; set; }
+    [Parameter] public bool IsLoading { get; set; }
+
+    private string? _localError;
+
+    private async Task HandleChange(InputFileChangeEventArgs e)
+    {
+        _localError = null;
+
+        var file = e.File;
+
+        if (!file.Name.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))
+        {
+            _localError = $"\"{file.Name}\" is not supported. Only .xlsx files are accepted.";
+            return;
+        }
+
+        await OnFileSelected.InvokeAsync(file);
+    }
+}

@@ -1,0 +1,53 @@
+<div class="panel schema-table">
+    <h3>Inferred Schema — <code>@Schema.TableName</code></h3>
+    <p class="panel-meta">
+        @Schema.Columns.Count column(s) inferred from @Schema.SampleRowCount sample row(s)
+    </p>
+
+    @if (Schema.Columns.Count == 0)
+    {
+        <p class="empty-notice">No columns were inferred.</p>
+    }
+    else
+    {
+        <div class="table-scroll">
+        <table class="table-nowrap">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Original Name</th>
+                    <th>Column (snake_case)</th>
+                    <th>PostgreSQL Type</th>
+                    <th>Nullable</th>
+                    <th>Key Quality</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var col in Schema.Columns)
+                {
+                    <tr>
+                        <td>@col.Index</td>
+                        <td>@col.Name</td>
+                        <td><code>@col.SnakeCaseName</code></td>
+                        <td>
+                            <span class="type-badge type-@col.InferredType.ToString().ToLowerInvariant()">
+                                @col.InferredType
+                            </span>
+                        </td>
+                        <td>@(col.IsNullable ? "yes" : "no")</td>
+                        <td>
+                            <span class="key-quality-badge key-@col.CandidateKeyQuality.ToString().ToLowerInvariant()">
+                                @(col.CandidateKeyQuality == CandidateKeyQuality.None ? "—" : col.CandidateKeyQuality.ToString())
+                            </span>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public TableSchema Schema { get; set; } = default!;
+}

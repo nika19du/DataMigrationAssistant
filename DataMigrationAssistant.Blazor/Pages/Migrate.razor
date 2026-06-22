@@ -1,0 +1,257 @@
+@page "/migrate"
+@inject TempFileService TempFiles
+@inject IPreviewService PreviewService
+@inject ISchemaInferenceService SchemaInferenceService
+@inject IValidationService ValidationService
+
+<PageTitle>Migrate — Data Migration Assistant</PageTitle>
+
+<div class="page-hero">
+    <h1>Data Migration Assistant</h1>
+    <p class="page-subtitle">Upload an Excel file to generate PostgreSQL migration and seed scripts.</p>
+</div>
+
+<AgentSkillsPanel />
+
+@* ── File upload (always visible) ─────────────────────────────────────── *@
+<FileUploadStep OnFileSelected="HandleFileSelected"
+                ExternalError="@_uploadError"
+                IsLoading="@_isUploading" />
+
+@* ── Sheet picker (visible when file loaded but preview not yet run) ──── *@
+@if (_sheetNames.Count > 0 && _preview is null && !_isUploading && !_isLoadingPreview)
+{
+    <SheetPickerStep SheetNames="@_sheetNames"
+                     OnConfirm="HandleSheetConfirm"
+                     IsLoading="@_isLoadingPreview" />
+}
+
+@* ── Preview loading ──────────────────────────────────────────────────── *@
+@if (_isLoadingPreview)
+{
+    <LoadingSpinner Message="Reading sheet and inferring schema…" />
+}
+
+<ErrorAlert Message="@_globalError" OnDismiss="() => _globalError = null" />
+
+@* ── Tabbed results (visible once a preview is ready) ─────────────────── *@
+@if (_preview is not null)
+{
+    @* Tab bar *@
+    <div class="tab-bar" role="tablist">
+        <button class="tab @TabClass(Tab.Preview)"
+                role="tab" aria-selected="@(_activeTab == Tab.Preview)"
+                @onclick='() => SetTab(Tab.Preview)'>
+            Preview
+        </button>
+        <button class="tab @TabClass(Tab.Schema)"
+                role="tab" aria-selected="@(_activeTab == Tab.Schema)"
+                @onclick='() => SetTab(Tab.Schema)'>
+            Schema
+        </button>
+        <button class="tab @TabClass(Tab.Validation)"
+                role="tab" aria-selected="@(_activeTab == Tab.Validation)">
+            @{
+                var warnCount = _validation?.Warnings.Count ?? 0;
+            }
+            <span @onclick='() => SetTab(Tab.Validation)'>
+                Validation
+                @if (warnCount > 0)
+                {
+                    <span class="tab-badge">@warnCount</span>
+                }
+            </span>
+        </button>
+        <button class="tab @TabClass(Tab.AiReview)"
+                role="tab" aria-selected="@(_activeTab == Tab.AiReview)"
+                @onclick='() => SetTab(Tab.AiReview)'>
+            AI Review
+        </button>
+        <button class="tab @TabClass(Tab.Normalization)"
+                role="tab" aria-selected="@(_activeTab == Tab.Normalization)"
+                @onclick='() => SetTab(Tab.Normalization)'>
+            Normalization
+        </button>
+        <button class="tab @TabClass(Tab.DataAnalysis)"
+                role="tab" aria-selected="@(_activeTab == Tab.DataAnalysis)"
+                @onclick='() => SetTab(Tab.DataAnalysis)'>
+            Data Analysis
+        </button>
+        <button class="tab @TabClass(Tab.Assistant)"
+                role="tab" aria-selected="@(_activeTab == Tab.Assistant)"
+                @onclick='() => SetTab(Tab.Assistant)'>
+            Assistant
+        </button>
+        <button class="tab @TabClass(Tab.Downloads)"
+                role="tab" aria-selected="@(_activeTab == Tab.Downloads)"
+                @onclick='() => SetTab(Tab.Downloads)'>
+            Downloads
+        </button>
+    </div>
+
+    @* Tab panels — always rendered so AI/Norm/Chat state survives tab switches *@
+    <div class="@PanelClass(Tab.Preview)">
+        <PreviewTable Preview="@_preview" />
+    </div>
+
+    <div class="@PanelClass(Tab.Schema)">
+        <SchemaTable Schema="@(_schema!)" />
+    </div>
+
+    <div class="@PanelClass(Tab.Validation)">
+        @if (_validation is not null)
+        {
+            <ValidationPanel Validation="@_validation" />
+        }
+        @if (_validation is not null && !_validation.HasWarnings && _validation.CanProceed)
+        {
+            <div class="panel">
+                <p class="validation-ok">✓ No warnings — data looks clean.</p>
+            </div>
+        }
+    </div>
+
+    <div class="@PanelClass(Tab.AiReview)">
+        <AiReviewPanel Preview="@_preview"
+                       Schema="@(_schema!)"
+                       Validation="@(_validation!)" />
+    </div>
+
+    <div class="@PanelClass(Tab.Normalization)">
+        <NormalizePanel Preview="@_preview"
+                        Schema="@(_schema!)"
+                        OnProposalChanged="p => _normProposal = p" />
+    </div>
+
+    <div class="@PanelClass(Tab.DataAnalysis)">
+        <DataAnalysisPanel Preview="@_preview"
+                           Schema="@(_schema!)"
+                           Validation="@(_validation!)"
+                           OnAnalysisCompleted="r => _analysisResult = r" />
+    </div>
+
+    <div class="@PanelClass(Tab.Assistant)">
+        <MigrationChatPanel Preview="@_preview"
+                            Schema="@_schema"
+                            Validation="@_validation"
+                            AnalysisResult="@_analysisResult"
+                            NormalizationProposal="@_normProposal"
+                            GeneratedMigrationSql="@_normProposal?.CombinedMigrationSql"
+                            GeneratedSeedSql="@_generatedSeedSql"
+                            GtnResult="@_gtnResult" />
+    </div>
+
+    <div class="@PanelClass(Tab.Downloads)">
+        <DownloadCenterPanel Preview="@_preview"
+                             Schema="@(_schema!)"
+                             NormalizationProposal="@_normProposal"
+                             OnSeedGenerated="sql => _generatedSeedSql = sql"
+                             OnGtnGenerated="result => _gtnResult = result" />
+    </div>
+}
+
+@code {
+    private enum Tab { Preview, Schema, Validation, AiReview, Normalization, DataAnalysis, Assistant, Downloads }
+
+    private Tab _activeTab = Tab.Preview;
+
+    private IReadOnlyList<string> _sheetNames = [];
+    private string? _tempFilePath;
+    private SheetPreview?            _preview;
+    private TableSchema?             _schema;
+    private ValidationResult?        _validation;
+    private NormalizationProposal?   _normProposal;
+    private DataAnalysisResult?      _analysisResult;
+    private string?                  _generatedSeedSql;
+    private GtnSeedGenerationResult? _gtnResult;
+    private string? _globalError;
+    private string? _uploadError;
+    private bool _isUploading;
+    private bool _isLoadingPreview;
+
+    private void SetTab(Tab tab) => _activeTab = tab;
+
+    private string TabClass(Tab tab) =>
+        _activeTab == tab ? "tab-active" : string.Empty;
+
+    private string PanelClass(Tab tab) =>
+        _activeTab == tab ? "tab-panel" : "tab-panel tab-panel-hidden";
+
+    private async Task HandleFileSelected(IBrowserFile file)
+    {
+        _globalError      = null;
+        _uploadError      = null;
+        _preview          = null;
+        _schema           = null;
+        _validation       = null;
+        _normProposal     = null;
+        _analysisResult   = null;
+        _generatedSeedSql = null;
+        _gtnResult        = null;
+        _sheetNames       = [];
+        _tempFilePath     = null;
+        _activeTab        = Tab.Preview;
+        _isUploading      = true;
+
+        var (tempPath, sheetNames, error) = await TempFiles.SaveAsync(file);
+        _isUploading = false;
+
+        if (error is not null)
+        {
+            _uploadError = error;
+            return;
+        }
+
+        _tempFilePath = tempPath;
+        _sheetNames = sheetNames;
+
+        if (_sheetNames.Count == 1)
+            await LoadPreviewAsync(_sheetNames[0], headerRow: 0);
+    }
+
+    private async Task HandleSheetConfirm((string Sheet, int HeaderRow) args) =>
+        await LoadPreviewAsync(args.Sheet, args.HeaderRow);
+
+    private async Task LoadPreviewAsync(string sheetName, int headerRow)
+    {
+        _globalError      = null;
+        _preview          = null;
+        _schema           = null;
+        _validation       = null;
+        _normProposal     = null;
+        _analysisResult   = null;
+        _generatedSeedSql = null;
+        _gtnResult        = null;
+        _isLoadingPreview = true;
+
+        try
+        {
+            var path = _tempFilePath!;
+
+            var previewResult = await Task.Run(() =>
+                PreviewService.GeneratePreview(path, headerRow, sheetName));
+
+            if (!previewResult.Success)
+            {
+                _globalError = previewResult.Error;
+                return;
+            }
+
+            _preview = previewResult.Value!;
+
+            _schema = await Task.Run(() =>
+                SchemaInferenceService.InferSchema(_preview));
+
+            _validation = await Task.Run(() =>
+                ValidationService.Validate(_preview, _schema));
+        }
+        catch (Exception ex)
+        {
+            _globalError = $"Unexpected error: {ex.Message}";
+        }
+        finally
+        {
+            _isLoadingPreview = false;
+        }
+    }
+}

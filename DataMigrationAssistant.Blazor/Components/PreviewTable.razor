@@ -1,0 +1,43 @@
+<div class="panel preview-table">
+    <h3>Data Preview — @Preview.SheetName</h3>
+    <p class="panel-meta">
+        Showing <strong>@Preview.Rows.Count</strong> of <strong>@Preview.TotalRowCount</strong> data rows
+        (header row @Preview.HeaderRowNumber)
+    </p>
+
+    @if (Preview.Columns.Count == 0)
+    {
+        <p class="empty-notice">No columns found in this sheet.</p>
+    }
+    else
+    {
+        <div class="table-scroll">
+            <table class="table-nowrap">
+                <thead>
+                    <tr>
+                        @foreach (var col in Preview.Columns)
+                        {
+                            <th title="@col.Name">@col.SnakeCaseName</th>
+                        }
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in Preview.Rows)
+                    {
+                        <tr>
+                            @foreach (var col in Preview.Columns)
+                            {
+                                var val = row.TryGetValue(col.SnakeCaseName, out var v) ? v : null;
+                                <td class="@(val is null ? "cell-null" : "")">@(val ?? "∅")</td>
+                            }
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public SheetPreview Preview { get; set; } = default!;
+}

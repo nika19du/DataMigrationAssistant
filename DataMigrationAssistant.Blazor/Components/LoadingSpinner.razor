@@ -1,0 +1,8 @@
+<div class="spinner-wrap">
+    <span class="spinner" aria-hidden="true"></span>
+    <span class="spinner-label">@(Message ?? "Loading…")</span>
+</div>
+
+@code {
+    [Parameter] public string? Message { get; set; }
+}

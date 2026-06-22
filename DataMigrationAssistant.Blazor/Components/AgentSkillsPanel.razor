@@ -1,0 +1,50 @@
+<div class="skills-section">
+    <p class="skills-section-label">Agent Skills</p>
+    <div class="skills-grid">
+        @foreach (var skill in Skills)
+        {
+            <div class="skill-card">
+                <p class="skill-card-title">@skill.Title</p>
+                <p class="skill-card-desc">@skill.Description</p>
+                <div class="skill-card-footer">
+                    <span class="skill-badge skill-badge-@skill.Status">@skill.BadgeLabel</span>
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private sealed record SkillDef(string Title, string Description, string Status, string BadgeLabel);
+
+    private static readonly SkillDef[] Skills =
+    [
+        new("Excel Preview",
+            "Reads .xlsx and .csv files, auto-detects sheets, and previews raw row data.",
+            "available", "Available"),
+        new("Schema Inference",
+            "Infers PostgreSQL column types and nullability from raw data values.",
+            "available", "Available"),
+        new("Data Validation",
+            "Checks for type conflicts, null risks, and duplicate values before SQL generation.",
+            "available", "Available"),
+        new("AI Data Analysis",
+            "AI-powered analysis of candidate keys, duplicate risks, and normalization opportunities.",
+            "ai", "Requires AI"),
+        new("Schema Normalization",
+            "Decomposes a flat schema into normalized relational tables with FK relationships.",
+            "ai", "Requires AI"),
+        new("SQL Generation",
+            "Generates CREATE TABLE, INSERT (seed), UPSERT, and diff-based migration scripts.",
+            "available", "Available"),
+        new("GTN Scenario Generator",
+            "Generates seed SQL for GTN validation scenario sheets.",
+            "domain", "Domain-specific"),
+        new("File Download",
+            "Exports migration.sql, seed.sql, warnings.md, preview.json, and diff-report.md.",
+            "available", "Available"),
+        new("Migration Chat Assistant",
+            "Conversational AI that answers questions about your dataset, schema, validation, and normalization.",
+            "ai", "Requires AI"),
+    ];
+}

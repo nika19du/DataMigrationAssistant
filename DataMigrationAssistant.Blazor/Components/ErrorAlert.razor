@@ -1,0 +1,16 @@
+@if (!string.IsNullOrEmpty(Message))
+{
+    <div class="error-alert" role="alert">
+        <span class="error-alert-icon">⚠</span>
+        <span class="error-alert-text">@Message</span>
+        @if (OnDismiss.HasDelegate)
+        {
+            <button class="btn-dismiss" @onclick="OnDismiss" aria-label="Dismiss">✕</button>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public string? Message { get; set; }
+    [Parameter] public EventCallback OnDismiss { get; set; }
+}

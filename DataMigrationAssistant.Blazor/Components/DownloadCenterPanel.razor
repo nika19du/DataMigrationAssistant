@@ -1,0 +1,343 @@
+@inject ISeedSqlGeneratorService SeedGenerator
+@inject IGtnScenarioSeedGeneratorService GtnGenerator
+@inject IWarningReportGeneratorService WarningReporter
+@inject DownloadService Downloads
+
+<div class="panel dl-panel">
+    <h3>Generated Files</h3>
+    <p class="panel-meta">Files are generated in memory and downloaded to your browser — no SQL is executed.</p>
+
+    @* ── Seed SQL ────────────────────────────────────────────────────────── *@
+    <section class="dl-section">
+        <h4 class="dl-section-title">Data</h4>
+
+        <div class="dl-card">
+            <div class="dl-card-info">
+                <span class="dl-filename">seed.sql</span>
+                <span class="dl-desc">INSERT statements for every row in the sheet</span>
+            </div>
+            <button class="btn-primary" @onclick="DownloadSeedAsync" disabled="@_seedBusy">
+                @(_seedBusy ? "Generating…" : "Download seed.sql")
+            </button>
+        </div>
+        <ErrorAlert Message="@_seedError" OnDismiss="() => _seedError = null" />
+    </section>
+
+    @* ── Normalization files ─────────────────────────────────────────────── *@
+    <section class="dl-section">
+        <h4 class="dl-section-title">Normalization</h4>
+
+        @if (NormalizationProposal is null)
+        {
+            <p class="dl-locked-hint">Run the Normalization tab first to unlock these files.</p>
+        }
+
+        <div class="dl-card @(NormalizationProposal is null ? "dl-card-locked" : "")">
+            <div class="dl-card-info">
+                <span class="dl-filename">normalized-schema.sql</span>
+                <span class="dl-desc">CREATE TABLE statements for all proposed tables</span>
+            </div>
+            <button class="btn-primary"
+                    @onclick="DownloadNormSchemaAsync"
+                    disabled="@(NormalizationProposal is null || _normSchemaBusy)">
+                @(_normSchemaBusy ? "Generating…" : "Download normalized-schema.sql")
+            </button>
+        </div>
+
+        <div class="dl-card @(NormalizationProposal is null ? "dl-card-locked" : "")">
+            <div class="dl-card-info">
+                <span class="dl-filename">normalized-seed.sql</span>
+                <span class="dl-desc">INSERT statements for all proposed tables</span>
+            </div>
+            <button class="btn-primary"
+                    @onclick="DownloadNormSeedAsync"
+                    disabled="@(NormalizationProposal is null || _normSeedBusy)">
+                @(_normSeedBusy ? "Generating…" : "Download normalized-seed.sql")
+            </button>
+        </div>
+
+        <div class="dl-card @(NormalizationProposal is null ? "dl-card-locked" : "")">
+            <div class="dl-card-info">
+                <span class="dl-filename">normalization-report.md</span>
+                <span class="dl-desc">Normalization reasoning and table relationships</span>
+            </div>
+            <button class="btn-primary"
+                    @onclick="DownloadNormReportAsync"
+                    disabled="@(NormalizationProposal is null || _normReportBusy)">
+                @(_normReportBusy ? "Generating…" : "Download normalization-report.md")
+            </button>
+        </div>
+
+        <ErrorAlert Message="@_normError" OnDismiss="() => _normError = null" />
+    </section>
+
+    @* ── GTN Scenario Seed ───────────────────────────────────────────────── *@
+    <section class="dl-section">
+        <h4 class="dl-section-title">GTN Scenario Seed</h4>
+
+        @if (!IsGtnSheet)
+        {
+            <p class="dl-locked-hint">
+                GTN generation requires columns:
+                <code>validation_scenario_id</code>, <code>validation_scenario_label</code>,
+                <code>system_element_type</code>, <code>element_sub_type</code>,
+                <code>element_rule_1</code>.
+            </p>
+        }
+
+        <div class="dl-card">
+            <div class="dl-card-info">
+                <span class="dl-filename">gtn-scenarios-seed.sql</span>
+                <span class="dl-desc">INSERT statements for <code>nomenclature.gtn_scenarios</code> and settings</span>
+            </div>
+            <button class="btn-primary" @onclick="RunGtnAsync"
+                    disabled="@(!IsGtnSheet || _gtnBusy)">
+                @(_gtnBusy ? "Generating…" : "Generate GTN Scenarios")
+            </button>
+        </div>
+
+        <ErrorAlert Message="@_gtnError" OnDismiss="() => _gtnError = null" />
+
+        @if (_gtnResult is not null)
+        {
+            <div class="dl-gtn-summary">
+                <span>@_gtnResult.ScenarioCount scenario(s) generated</span>
+                @if (_gtnResult.Warnings.Count > 0)
+                {
+                    <span class="dl-warn-badge">@_gtnResult.Warnings.Count warning(s)</span>
+                }
+                else
+                {
+                    <span class="dl-ok-badge">No warnings</span>
+                }
+
+                @if (_gtnResult.ScenarioCount == 0)
+                {
+                    <span class="dl-locked-hint"> — sheet may not be in GTN format</span>
+                }
+            </div>
+
+            @if (_gtnResult.Warnings.Count > 0)
+            {
+                <details class="dl-gtn-warnings">
+                    <summary>GTN warnings (@_gtnResult.Warnings.Count)</summary>
+                    <div class="table-scroll">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Row</th>
+                                    <th>Scenario ID</th>
+                                    <th>Column</th>
+                                    <th>Value</th>
+                                    <th>Message</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var w in _gtnResult.Warnings)
+                                {
+                                    <tr>
+                                        <td>@w.RowNumber</td>
+                                        <td>@(w.ScenarioId ?? "—")</td>
+                                        <td>@w.Column</td>
+                                        <td>@(w.Value ?? "—")</td>
+                                        <td>@w.Message</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </details>
+            }
+
+            <div class="dl-gtn-actions">
+                <button class="btn-primary" @onclick="DownloadGtnSqlAsync">
+                    Download gtn-scenarios-seed.sql
+                </button>
+                @if (_gtnResult.Warnings.Count > 0)
+                {
+                    <button class="btn-secondary" @onclick="DownloadGtnWarningsAsync">
+                        Download gtn-seed-warnings.md
+                    </button>
+                }
+            </div>
+        }
+    </section>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public SheetPreview Preview  { get; set; } = default!;
+    [Parameter, EditorRequired] public TableSchema   Schema  { get; set; } = default!;
+    [Parameter] public NormalizationProposal? NormalizationProposal { get; set; }
+    [Parameter] public EventCallback<string> OnSeedGenerated { get; set; }
+    [Parameter] public EventCallback<GtnSeedGenerationResult> OnGtnGenerated { get; set; }
+
+    private static readonly IReadOnlySet<string> GtnRequiredColumns =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "validation_scenario_id",
+            "validation_scenario_label",
+            "system_element_type",
+            "element_sub_type",
+            "element_rule_1",
+        };
+
+    private bool IsGtnSheet =>
+        Preview.Columns
+               .Select(c => c.SnakeCaseName)
+               .ToHashSet(StringComparer.OrdinalIgnoreCase)
+               .IsSupersetOf(GtnRequiredColumns);
+
+    // ── Seed state ────────────────────────────────────────────────────────
+    private bool    _seedBusy;
+    private string? _seedError;
+
+    // ── Normalization state ───────────────────────────────────────────────
+    private bool    _normSchemaBusy;
+    private bool    _normSeedBusy;
+    private bool    _normReportBusy;
+    private string? _normError;
+
+    // ── GTN state ─────────────────────────────────────────────────────────
+    private bool                    _gtnBusy;
+    private string?                 _gtnError;
+    private GtnSeedGenerationResult? _gtnResult;
+
+    // ── Seed SQL ──────────────────────────────────────────────────────────
+
+    private async Task DownloadSeedAsync()
+    {
+        _seedBusy  = true;
+        _seedError = null;
+        try
+        {
+            var sql = await Task.Run(() => SeedGenerator.GenerateSeed(Preview, Schema));
+            await Downloads.DownloadSqlAsync("seed.sql", sql);
+            if (OnSeedGenerated.HasDelegate)
+                await OnSeedGenerated.InvokeAsync(sql);
+        }
+        catch (Exception ex)
+        {
+            _seedError = $"Seed generation failed: {ex.Message}";
+        }
+        finally
+        {
+            _seedBusy = false;
+        }
+    }
+
+    // ── Normalization downloads ───────────────────────────────────────────
+
+    private async Task DownloadNormSchemaAsync()
+    {
+        if (NormalizationProposal is null) return;
+        _normSchemaBusy = true;
+        _normError      = null;
+        try
+        {
+            await Downloads.DownloadSqlAsync(
+                "normalized-schema.sql",
+                NormalizationProposal.CombinedMigrationSql);
+        }
+        catch (Exception ex)
+        {
+            _normError = $"Download failed: {ex.Message}";
+        }
+        finally
+        {
+            _normSchemaBusy = false;
+        }
+    }
+
+    private async Task DownloadNormSeedAsync()
+    {
+        if (NormalizationProposal is null) return;
+        _normSeedBusy = true;
+        _normError    = null;
+        try
+        {
+            await Downloads.DownloadSqlAsync(
+                "normalized-seed.sql",
+                NormalizationProposal.CombinedSeedSql);
+        }
+        catch (Exception ex)
+        {
+            _normError = $"Download failed: {ex.Message}";
+        }
+        finally
+        {
+            _normSeedBusy = false;
+        }
+    }
+
+    private async Task DownloadNormReportAsync()
+    {
+        if (NormalizationProposal is null) return;
+        _normReportBusy = true;
+        _normError      = null;
+        try
+        {
+            await Downloads.DownloadMarkdownAsync(
+                "normalization-report.md",
+                NormalizationProposal.MarkdownReport);
+        }
+        catch (Exception ex)
+        {
+            _normError = $"Download failed: {ex.Message}";
+        }
+        finally
+        {
+            _normReportBusy = false;
+        }
+    }
+
+    // ── GTN generation ────────────────────────────────────────────────────
+
+    private async Task RunGtnAsync()
+    {
+        _gtnBusy   = true;
+        _gtnError  = null;
+        _gtnResult = null;
+        try
+        {
+            _gtnResult = await Task.Run(() => GtnGenerator.Generate(Preview));
+            if (OnGtnGenerated.HasDelegate)
+                await OnGtnGenerated.InvokeAsync(_gtnResult);
+        }
+        catch (Exception ex)
+        {
+            _gtnError = $"GTN generation failed: {ex.Message}";
+        }
+        finally
+        {
+            _gtnBusy = false;
+        }
+    }
+
+    private async Task DownloadGtnSqlAsync()
+    {
+        if (_gtnResult is null) return;
+        try
+        {
+            await Downloads.DownloadSqlAsync("gtn-scenarios-seed.sql", _gtnResult.ScenariosSql);
+        }
+        catch (Exception ex)
+        {
+            _gtnError = $"Download failed: {ex.Message}";
+        }
+    }
+
+    private async Task DownloadGtnWarningsAsync()
+    {
+        if (_gtnResult is null) return;
+        try
+        {
+            var md = await Task.Run(() =>
+                WarningReporter.GenerateGtnWarningReport(_gtnResult.Warnings, _gtnResult.ScenarioCount));
+            await Downloads.DownloadMarkdownAsync("gtn-seed-warnings.md", md);
+        }
+        catch (Exception ex)
+        {
+            _gtnError = $"Download failed: {ex.Message}";
+        }
+    }
+}

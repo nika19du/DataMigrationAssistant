@@ -1,0 +1,43 @@
+<div class="sheet-picker-step">
+    <h3>Step 2 — Select Sheet and Header Row</h3>
+
+    <div class="field-row">
+        <label>
+            Sheet
+            <select @bind="_selectedSheet">
+                @foreach (var name in SheetNames)
+                {
+                    <option value="@name">@name</option>
+                }
+            </select>
+        </label>
+
+        <label>
+            Header row
+            <input type="number" min="0" @bind="_headerRow" />
+            <span class="field-hint">0 = auto-detect (first used row)</span>
+        </label>
+    </div>
+
+    <button class="btn-primary" @onclick="HandleConfirm" disabled="@IsLoading">
+        @(IsLoading ? "Loading…" : "Load Preview")
+    </button>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<string> SheetNames { get; set; } = [];
+    [Parameter, EditorRequired] public EventCallback<(string Sheet, int HeaderRow)> OnConfirm { get; set; }
+    [Parameter] public bool IsLoading { get; set; }
+
+    private string _selectedSheet = string.Empty;
+    private int _headerRow;
+
+    protected override void OnParametersSet()
+    {
+        if (SheetNames.Count > 0 && string.IsNullOrEmpty(_selectedSheet))
+            _selectedSheet = SheetNames[0];
+    }
+
+    private async Task HandleConfirm() =>
+        await OnConfirm.InvokeAsync((_selectedSheet, _headerRow));
+}

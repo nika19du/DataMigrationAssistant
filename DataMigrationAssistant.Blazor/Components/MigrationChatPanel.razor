@@ -1,0 +1,296 @@
+@inject IMigrationAssistant MigrationAssistant
+@inject IJSRuntime JS
+
+<div class="panel chat-panel">
+    <h3>Migration Chat Assistant</h3>
+
+    <div class="run-bar">
+        <label class="run-bar-label">
+            Provider
+            <select @bind="_provider" disabled="@_isSending">
+                <option value="ollama">Ollama</option>
+                <option value="claude">Claude</option>
+            </select>
+        </label>
+
+        <button class="btn-secondary"
+                @onclick="Clear"
+                disabled="@(_isSending || _messages.Count == 0)">
+            Clear conversation
+        </button>
+    </div>
+
+    @if (_contextChanged)
+    {
+        <div class="chat-context-banner">
+            Analysis results have changed since this conversation started.
+            <button class="btn-link" @onclick="ResetContextSnapshot">Refresh context</button>
+        </div>
+    }
+
+    <div class="chat-history" @ref="_chatHistoryRef">
+        @if (_messages.Count == 0 && !_isSending)
+        {
+            <div class="chat-empty">
+                <p class="chat-empty-title">Ask about your dataset. For example:</p>
+                <ul class="chat-suggestions">
+                    <li @onclick='() => SetInput("What risks do you see in this dataset?")'>
+                        What risks do you see?
+                    </li>
+                    <li @onclick='() => SetInput("Which primary key should I use?")'>
+                        Which primary key should I use?
+                    </li>
+                    <li @onclick='() => SetInput("Why was this normalization proposed?")'>
+                        Why was this normalization proposed?
+                    </li>
+                    <li @onclick='() => SetInput("How should I migrate this dataset?")'>
+                        How should I migrate this dataset?
+                    </li>
+                    <li @onclick='() => SetInput("What validation warnings are most important?")'>
+                        What validation warnings are most important?
+                    </li>
+                </ul>
+            </div>
+        }
+
+        @foreach (var entry in _conversation)
+        {
+            <div class="chat-bubble chat-bubble-@(entry.Message.Role == ChatRole.User ? "user" : "assistant")">
+                <div class="chat-bubble-role">
+                    @(entry.Message.Role == ChatRole.User ? "You" : "Assistant")
+                    @if (entry.Message.Role == ChatRole.Assistant && entry.AgentName is not null)
+                    {
+                        <span class="chat-agent-badge @GetAgentBadgeClass(entry.AgentName)">@GetAgentBadgeLabel(entry.AgentName)</span>
+                    }
+                </div>
+                <div class="chat-bubble-content">@entry.Message.Content</div>
+            </div>
+        }
+
+        @if (_isSending)
+        {
+            <div class="chat-bubble chat-bubble-assistant">
+                <div class="chat-bubble-role">Assistant</div>
+                <div class="chat-bubble-content">
+                    <span class="chat-typing">Thinking…</span>
+                </div>
+            </div>
+        }
+    </div>
+
+    <ErrorAlert Message="@_error" OnDismiss="() => _error = null" />
+
+    <div class="chat-input-row">
+        <textarea class="chat-input"
+                  @ref="_chatInputRef"
+                  @bind="_inputText"
+                  @bind:event="oninput"
+                  @onkeydown="HandleKeyDownAsync"
+                  placeholder="Ask a question about your dataset…"
+                  rows="2"
+                  disabled="@_isSending"></textarea>
+        <button class="btn-primary chat-send-btn"
+                @onclick="SendAsync"
+                disabled="@(string.IsNullOrWhiteSpace(_inputText) || _isSending)">
+            Send
+        </button>
+    </div>
+</div>
+
+@code {
+    [Parameter] public SheetPreview?            Preview               { get; set; }
+    [Parameter] public TableSchema?             Schema                { get; set; }
+    [Parameter] public ValidationResult?        Validation            { get; set; }
+    [Parameter] public DataAnalysisResult?      AnalysisResult        { get; set; }
+    [Parameter] public NormalizationProposal?   NormalizationProposal { get; set; }
+    [Parameter] public string?                  GeneratedMigrationSql { get; set; }
+    [Parameter] public string?                  GeneratedSeedSql      { get; set; }
+    [Parameter] public GtnSeedGenerationResult? GtnResult             { get; set; }
+
+    private string _provider = "ollama";
+
+    private sealed record ConversationEntry(ChatMessage Message, string? AgentName = null);
+
+    private readonly List<ConversationEntry> _conversation = [];
+
+    // Flat message list passed to GeneralMigrationAgent for LLM context
+    private List<ChatMessage> _messages => _conversation.Select(e => e.Message).ToList();
+
+    private string         _inputText    = string.Empty;
+    private ElementReference _chatInputRef;
+    private bool           _isSending;
+    private string? _error;
+    private bool    _shouldScrollToBottom;
+
+    // Context snapshot — taken on first message; compared against params to detect staleness
+    private ChatContext?             _contextSnapshot;
+    private SheetPreview?            _snapshotPreview;
+    private TableSchema?             _snapshotSchema;
+    private ValidationResult?        _snapshotValidation;
+    private DataAnalysisResult?      _snapshotAnalysis;
+    private NormalizationProposal?   _snapshotNorm;
+    private string?                  _snapshotMigrationSql;
+    private string?                  _snapshotSeedSql;
+    private GtnSeedGenerationResult? _snapshotGtnResult;
+    private bool                     _contextChanged;
+
+    private ElementReference _chatHistoryRef;
+
+    protected override void OnParametersSet()
+    {
+        if (_contextSnapshot is not null)
+        {
+            _contextChanged = Preview               != _snapshotPreview
+                           || Schema                != _snapshotSchema
+                           || Validation            != _snapshotValidation
+                           || AnalysisResult        != _snapshotAnalysis
+                           || NormalizationProposal != _snapshotNorm
+                           || GeneratedMigrationSql != _snapshotMigrationSql
+                           || GeneratedSeedSql      != _snapshotSeedSql
+                           || GtnResult             != _snapshotGtnResult;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_shouldScrollToBottom)
+        {
+            _shouldScrollToBottom = false;
+            try
+            {
+                await JS.InvokeVoidAsync("scrollChatToBottom", _chatHistoryRef);
+            }
+            catch
+            {
+                // JS interop may fail during pre-render; safe to ignore
+            }
+        }
+    }
+
+    private async Task SendAsync()
+    {
+        var text = _inputText.Trim();
+        if (string.IsNullOrWhiteSpace(text) || _isSending)
+            return;
+
+        _error     = null;
+        _inputText = string.Empty;
+        _isSending = true;
+
+        StateHasChanged();
+        try { await JS.InvokeVoidAsync("clearChatInput", _chatInputRef); } catch { }
+
+        _contextSnapshot ??= TakeContextSnapshot();
+
+        var userMessage = new ChatMessage { Role = ChatRole.User, Content = text };
+        _conversation.Add(new ConversationEntry(userMessage));
+        _shouldScrollToBottom = true;
+
+        try
+        {
+            var agentContext = new MigrationAgentContext
+            {
+                Question    = text,
+                History     = _messages,
+                ChatContext = _contextSnapshot,
+                Provider    = _provider,
+            };
+
+            var response = await MigrationAssistant.AskAsync(agentContext);
+
+            var assistantMessage = new ChatMessage { Role = ChatRole.Assistant, Content = response.Answer };
+            _conversation.Add(new ConversationEntry(assistantMessage, response.AgentName));
+        }
+        catch (Exception ex)
+        {
+            _error = $"Chat failed: {ex.Message}";
+        }
+        finally
+        {
+            _isSending            = false;
+            _shouldScrollToBottom = true;
+        }
+    }
+
+    private async Task HandleKeyDownAsync(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+            await SendAsync();
+    }
+
+    private void Clear()
+    {
+        _conversation.Clear();
+        _contextSnapshot      = null;
+        _snapshotPreview      = null;
+        _snapshotSchema       = null;
+        _snapshotValidation   = null;
+        _snapshotAnalysis     = null;
+        _snapshotNorm         = null;
+        _snapshotMigrationSql = null;
+        _snapshotSeedSql      = null;
+        _snapshotGtnResult    = null;
+        _contextChanged       = false;
+        _error                = null;
+        _inputText            = string.Empty;
+    }
+
+    private void ResetContextSnapshot()
+    {
+        _contextSnapshot = TakeContextSnapshot();
+    }
+
+    private void SetInput(string text)
+    {
+        _inputText = text;
+    }
+
+    private static string GetAgentBadgeClass(string? agentName) => agentName switch
+    {
+        "Schema Agent"            => "chat-agent-badge--schema",
+        "Validation Agent"        => "chat-agent-badge--validation",
+        "Data Analysis Agent"     => "chat-agent-badge--data-analysis",
+        "Normalization Agent"     => "chat-agent-badge--normalization",
+        "SQL Agent"               => "chat-agent-badge--sql",
+        "GTN Agent"               => "chat-agent-badge--gtn",
+        "General Migration Agent" => "chat-agent-badge--general",
+        _                         => string.Empty,
+    };
+
+    private static string GetAgentBadgeLabel(string? agentName) => agentName switch
+    {
+        "Schema Agent"            => "Answered by 🧠 Schema Agent",
+        "Validation Agent"        => "Answered by 🛡 Validation Agent",
+        "Data Analysis Agent"     => "Answered by 📊 Data Analysis Agent",
+        "Normalization Agent"     => "Answered by 🧩 Normalization Agent",
+        "SQL Agent"               => "Answered by 🧾 SQL Agent",
+        "GTN Agent"               => "Answered by 🧬 GTN Agent",
+        "General Migration Agent" => "Answered by 🤖 General Migration Agent",
+        _                         => agentName is null ? string.Empty : $"Answered by {agentName}",
+    };
+
+    private ChatContext TakeContextSnapshot()
+    {
+        _snapshotPreview      = Preview;
+        _snapshotSchema       = Schema;
+        _snapshotValidation   = Validation;
+        _snapshotAnalysis     = AnalysisResult;
+        _snapshotNorm         = NormalizationProposal;
+        _snapshotMigrationSql = GeneratedMigrationSql;
+        _snapshotSeedSql      = GeneratedSeedSql;
+        _snapshotGtnResult    = GtnResult;
+        _contextChanged       = false;
+
+        return new ChatContext
+        {
+            Preview               = Preview,
+            Schema                = Schema,
+            Validation            = Validation,
+            AnalysisResult        = AnalysisResult,
+            NormalizationProposal = NormalizationProposal,
+            GeneratedMigrationSql = GeneratedMigrationSql,
+            GeneratedSeedSql      = GeneratedSeedSql,
+            GtnResult             = GtnResult,
+        };
+    }
+}

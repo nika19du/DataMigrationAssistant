@@ -1,0 +1,182 @@
+@inject INormalizationServiceFactory NormFactory
+@inject IDeterministicNormalizationService DeterministicNorm
+@inject INormalizationSqlGeneratorService SqlGenerator
+
+<div class="panel norm-panel">
+    <h3>Schema Normalization Preview</h3>
+
+    <div class="run-bar">
+        <label class="run-bar-label">
+            Provider
+            <select @bind="_provider" disabled="@_isRunning">
+                <option value="deterministic">Deterministic (rule-based)</option>
+                <option value="claude">Claude</option>
+                <option value="ollama">Ollama</option>
+            </select>
+        </label>
+
+        <button class="btn-primary" @onclick="RunAsync" disabled="@_isRunning">
+            @(_isRunning ? "Running…" : "Run Normalization")
+        </button>
+    </div>
+
+    @if (_isRunning)
+    {
+        <LoadingSpinner Message="@(_provider == "deterministic" ? "Applying rules…" : "Calling AI provider…")" />
+    }
+
+    <ErrorAlert Message="@_error" OnDismiss="() => _error = null" />
+
+    @if (_proposal is not null)
+    {
+        @* ── Tables ─────────────────────────────────────────────────── *@
+        <section class="norm-section">
+            <h4>Proposed Tables (@_proposal.Tables.Count)</h4>
+
+            @foreach (var table in _proposal.Tables)
+            {
+                <div class="norm-table-card">
+                    <div class="norm-table-header">
+                        <span class="norm-table-name"><code>@table.TableName</code></span>
+                        <span class="norm-table-meta">
+                            @table.Columns.Count column(s) ·
+                            source: @(table.SourceColumns.Count > 0 ? string.Join(", ", table.SourceColumns) : "—")
+                        </span>
+                    </div>
+
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Column</th>
+                                <th>Type</th>
+                                <th>Nullable</th>
+                                <th>PK</th>
+                                <th>FK → target</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var col in table.Columns)
+                            {
+                                <tr>
+                                    <td><code>@col.Name</code></td>
+                                    <td>
+                                        <span class="type-badge type-@NormTypeClass(col.PostgresType)">
+                                            @col.PostgresType
+                                        </span>
+                                    </td>
+                                    <td>@(col.IsNullable ? "yes" : "no")</td>
+                                    <td>@(col.IsPrimaryKey ? "✓" : "")</td>
+                                    <td class="fk-cell">@col.ForeignKeyTo</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </section>
+
+        @* ── Relationships ───────────────────────────────────────────── *@
+        @if (GetRelationships(_proposal).Count > 0)
+        {
+            <section class="norm-section">
+                <h4>Relationships</h4>
+                <ul class="rel-list">
+                    @foreach (var rel in GetRelationships(_proposal))
+                    {
+                        <li>
+                            <span class="rel-child"><code>@rel.From</code>.<code>@rel.Col</code></span>
+                            <span class="rel-arrow">→</span>
+                            <span class="rel-parent"><code>@rel.To</code></span>
+                        </li>
+                    }
+                </ul>
+            </section>
+        }
+
+        @* ── Reasoning ───────────────────────────────────────────────── *@
+        @if (!string.IsNullOrWhiteSpace(_proposal.Reasoning))
+        {
+            <section class="norm-section">
+                <h4>Reasoning</h4>
+                <p class="norm-reasoning">@_proposal.Reasoning</p>
+            </section>
+        }
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public SheetPreview Preview { get; set; } = default!;
+    [Parameter, EditorRequired] public TableSchema Schema { get; set; } = default!;
+    [Parameter] public EventCallback<NormalizationProposal?> OnProposalChanged { get; set; }
+
+    private string _provider = "deterministic";
+    private bool _isRunning;
+    private string? _error;
+    private NormalizationProposal? _proposal;
+
+    private async Task RunAsync()
+    {
+        _error = null;
+        _proposal = null;
+        await OnProposalChanged.InvokeAsync(null);
+        _isRunning = true;
+
+        try
+        {
+            var request = new NormalizationRequest
+            {
+                SheetPreview = Preview,
+                FlatSchema   = Schema,
+            };
+
+            var proposalResult = _provider == "deterministic"
+                ? await Task.Run(() => DeterministicNorm.TryNormalize(request))
+                : await NormFactory.Create(_provider).ProposeAsync(request);
+
+            if (!proposalResult.Success)
+            {
+                _error = proposalResult.Error ?? "Normalization returned no result.";
+                return;
+            }
+
+            var enriched = await Task.Run(() => SqlGenerator.Generate(proposalResult.Value!, Preview));
+
+            if (!enriched.Success)
+            {
+                _error = enriched.Error ?? "SQL generation failed.";
+                return;
+            }
+
+            _proposal = enriched.Value!;
+            await OnProposalChanged.InvokeAsync(_proposal);
+        }
+        catch (Exception ex)
+        {
+            _error = $"Normalization failed: {ex.Message}";
+        }
+        finally
+        {
+            _isRunning = false;
+        }
+    }
+
+    private static IReadOnlyList<(string From, string Col, string To)> GetRelationships(
+        NormalizationProposal proposal) =>
+        proposal.Tables
+            .SelectMany(t => t.Columns
+                .Where(c => c.ForeignKeyTo is not null)
+                .Select(c => (From: t.TableName, Col: c.Name, To: c.ForeignKeyTo!)))
+            .ToList();
+
+    private static string NormTypeClass(string pgType) =>
+        pgType.Trim().ToUpperInvariant() switch
+        {
+            "INTEGER" or "INT" or "INT4"          => "integer",
+            "BIGINT"  or "INT8"                   => "bigint",
+            "NUMERIC" or "DECIMAL"                => "numeric",
+            "BOOLEAN" or "BOOL"                   => "boolean",
+            "DATE"                                => "date",
+            "TIMESTAMP" or "TIMESTAMPTZ"          => "timestamp",
+            _                                     => "text",
+        };
+}

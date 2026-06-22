@@ -1,0 +1,142 @@
+@inject IAiReviewServiceFactory ReviewFactory
+
+<div class="panel ai-panel">
+    <h3>AI Review</h3>
+
+    <div class="run-bar">
+        <label class="run-bar-label">
+            Provider
+            <select @bind="_provider" disabled="@_isRunning">
+                <option value="claude">Claude</option>
+                <option value="ollama">Ollama</option>
+            </select>
+        </label>
+
+        <button class="btn-primary" @onclick="RunAsync" disabled="@_isRunning">
+            @(_isRunning ? "Running…" : "Run AI Review")
+        </button>
+    </div>
+
+    @if (_isRunning)
+    {
+        <LoadingSpinner Message="Calling AI provider…" />
+    }
+
+    <ErrorAlert Message="@_error" OnDismiss="() => _error = null" />
+
+    @if (_result is not null)
+    {
+        <section class="ai-section">
+            <h4>Summary</h4>
+            <p class="ai-summary">@_result.Summary</p>
+        </section>
+
+        @if (_result.Risks.Count > 0)
+        {
+            var showRiskEvidence = _result.Risks.Any(r => r.Evidence is not null);
+            <section class="ai-section">
+                <h4>Risks</h4>
+                <div class="table-scroll">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Level</th>
+                                <th>Description</th>
+                                @if (showRiskEvidence) { <th>Evidence</th> }
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var risk in _result.Risks)
+                            {
+                                <tr>
+                                    <td>
+                                        <span class="risk-badge risk-@risk.Level.ToLowerInvariant()">
+                                            @risk.Level
+                                        </span>
+                                    </td>
+                                    <td>@risk.Description</td>
+                                    @if (showRiskEvidence) { <td class="evidence-cell">@risk.Evidence</td> }
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        }
+
+        @if (_result.Recommendations.Count > 0)
+        {
+            var showRecEvidence = _result.Recommendations.Any(r => r.Evidence is not null);
+            <section class="ai-section">
+                <h4>Recommendations</h4>
+                <div class="table-scroll">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Priority</th>
+                                <th>Description</th>
+                                <th>Action</th>
+                                @if (showRecEvidence) { <th>Evidence</th> }
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var rec in _result.Recommendations)
+                            {
+                                <tr>
+                                    <td>
+                                        <span class="priority-badge priority-@rec.Priority.ToLowerInvariant()">
+                                            @rec.Priority
+                                        </span>
+                                    </td>
+                                    <td>@rec.Description</td>
+                                    <td class="action-cell">@rec.Action</td>
+                                    @if (showRecEvidence) { <td class="evidence-cell">@rec.Evidence</td> }
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        }
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public SheetPreview Preview { get; set; } = default!;
+    [Parameter, EditorRequired] public TableSchema Schema { get; set; } = default!;
+    [Parameter, EditorRequired] public ValidationResult Validation { get; set; } = default!;
+
+    private string _provider = "claude";
+    private bool _isRunning;
+    private string? _error;
+    private AiReviewResult? _result;
+
+    private async Task RunAsync()
+    {
+        _error = null;
+        _result = null;
+        _isRunning = true;
+
+        try
+        {
+            var request = new AiReviewRequest
+            {
+                Mode             = AiReviewMode.Dataset,
+                SheetPreview     = Preview,
+                TableSchema      = Schema,
+                ValidationResult = Validation,
+            };
+
+            var service = ReviewFactory.Create(_provider);
+            _result = await service.ReviewAsync(request);
+        }
+        catch (Exception ex)
+        {
+            _error = $"AI review failed: {ex.Message}";
+        }
+        finally
+        {
+            _isRunning = false;
+        }
+    }
+}

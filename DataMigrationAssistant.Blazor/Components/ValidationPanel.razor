@@ -1,0 +1,45 @@
+@if (!Validation.CanProceed || Validation.HasWarnings)
+{
+    <div class="panel validation-panel">
+        <h3>Validation</h3>
+
+        @if (!Validation.CanProceed)
+        {
+            var err = Validation.Warnings.Count > 0 ? Validation.Warnings[0] : null;
+            <div class="validation-item validation-item-error">
+                <div class="validation-item-header">
+                    <span class="severity-badge severity-error">Error</span>
+                    <span class="validation-code-chip">@(err?.Code ?? "EMPTY_SHEET")</span>
+                    <span class="validation-message">@(err?.Message ?? "Cannot proceed: the sheet has no usable columns.")</span>
+                </div>
+            </div>
+        }
+        else
+        {
+            @* Warning-severity items first, then Info *@
+            @foreach (var w in Validation.Warnings.OrderBy(w => w.Severity == ValidationSeverity.Warning ? 0 : 1))
+            {
+                var severityClass = w.Severity.ToString().ToLowerInvariant();
+                <div class="validation-item validation-item-@severityClass">
+                    <div class="validation-item-header">
+                        <span class="severity-badge severity-@severityClass">@w.Severity</span>
+                        <span class="validation-code-chip">@w.Code</span>
+                        @if (w.ColumnName is not null)
+                        {
+                            <span class="column-ref">[@w.ColumnName]</span>
+                        }
+                        <span class="validation-message">@w.Message</span>
+                    </div>
+                    @if (w.Suggestion is not null)
+                    {
+                        <p class="validation-suggestion">@w.Suggestion</p>
+                    }
+                </div>
+            }
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public ValidationResult Validation { get; set; } = default!;
+}

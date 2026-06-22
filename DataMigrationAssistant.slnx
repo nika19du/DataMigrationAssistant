@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="DataMigrationAssistant.Blazor/DataMigrationAssistant.Blazor.csproj" />
+  <Project Path="DataMigrationAssistant.Cli/DataMigrationAssistant.Cli.csproj" />
+  <Project Path="DataMigrationAssistant.Core.Tests/DataMigrationAssistant.Core.Tests.csproj" />
+  <Project Path="DataMigrationAssistant.Core/DataMigrationAssistant.Core.csproj" />
+</Solution>

@@ -1,0 +1,188 @@
+@inject IDataAnalysisServiceFactory AnalysisFactory
+
+<div class="panel analysis-panel">
+    <h3>Data Analysis</h3>
+
+    <div class="run-bar">
+        <label class="run-bar-label">
+            Provider
+            <select @bind="_provider" disabled="@_isRunning">
+                <option value="deterministic">Deterministic (rule-based)</option>
+                <option value="claude">Claude</option>
+                <option value="ollama">Ollama</option>
+            </select>
+        </label>
+
+        <button class="btn-primary" @onclick="RunAsync" disabled="@_isRunning">
+            @(_isRunning ? "Analysing…" : "Run Analysis")
+        </button>
+    </div>
+
+    @if (_isRunning)
+    {
+        <LoadingSpinner Message="@(_provider == "deterministic" ? "Applying rules…" : "Calling AI provider…")" />
+    }
+
+    <ErrorAlert Message="@_error" OnDismiss="() => _error = null" />
+
+    @if (_result is not null)
+    {
+        @* ── Summary ───────────────────────────────────────────────────── *@
+        <section class="analysis-section">
+            <h4 class="analysis-section-title">Summary</h4>
+            <p class="analysis-summary">@_result.Summary</p>
+        </section>
+
+        @* ── Findings ──────────────────────────────────────────────────── *@
+        @if (_result.Findings.Count > 0)
+        {
+            <section class="analysis-section">
+                <h4 class="analysis-section-title">
+                    Findings
+                    <span class="analysis-count">@_result.Findings.Count</span>
+                </h4>
+                @foreach (var f in _result.Findings)
+                {
+                    <div class="analysis-item analysis-item-@SeverityClass(f.Severity)">
+                        <div class="analysis-item-header">
+                            <span class="analysis-category-badge">@FormatCategory(f.Category)</span>
+                            <span class="analysis-severity-badge severity-@SeverityClass(f.Severity)">
+                                @f.Severity
+                            </span>
+                            <span class="analysis-description">@f.Description</span>
+                        </div>
+                        @if (!string.IsNullOrWhiteSpace(f.Detail))
+                        {
+                            <p class="analysis-detail">@f.Detail</p>
+                        }
+                    </div>
+                }
+            </section>
+        }
+
+        @* ── Risks ─────────────────────────────────────────────────────── *@
+        @if (_result.Risks.Count > 0)
+        {
+            <section class="analysis-section">
+                <h4 class="analysis-section-title">
+                    Risks
+                    <span class="analysis-count analysis-count-warn">@_result.Risks.Count</span>
+                </h4>
+                @foreach (var r in _result.Risks)
+                {
+                    <div class="analysis-item analysis-item-@SeverityClass(r.Severity)">
+                        <div class="analysis-item-header">
+                            <span class="analysis-category-badge">@FormatCategory(r.Category)</span>
+                            <span class="analysis-severity-badge severity-@SeverityClass(r.Severity)">
+                                @r.Severity
+                            </span>
+                            <span class="analysis-description">@r.Description</span>
+                        </div>
+                        @if (!string.IsNullOrWhiteSpace(r.Detail))
+                        {
+                            <p class="analysis-detail">@r.Detail</p>
+                        }
+                    </div>
+                }
+            </section>
+        }
+
+        @* ── Recommendations ───────────────────────────────────────────── *@
+        @if (_result.Recommendations.Count > 0)
+        {
+            <section class="analysis-section">
+                <h4 class="analysis-section-title">
+                    Recommendations
+                    <span class="analysis-count">@_result.Recommendations.Count</span>
+                </h4>
+                <div class="table-scroll">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Priority</th>
+                                <th>Type</th>
+                                <th>Description</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var rec in _result.Recommendations)
+                            {
+                                <tr>
+                                    <td>
+                                        <span class="priority-badge priority-@rec.Priority.ToLowerInvariant()">
+                                            @rec.Priority
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <span class="analysis-type-badge">@rec.Type</span>
+                                    </td>
+                                    <td>@rec.Description</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        }
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public SheetPreview      Preview             { get; set; } = default!;
+    [Parameter, EditorRequired] public TableSchema       Schema              { get; set; } = default!;
+    [Parameter, EditorRequired] public ValidationResult  Validation          { get; set; } = default!;
+    [Parameter]                 public EventCallback<DataAnalysisResult?> OnAnalysisCompleted { get; set; }
+
+    private string             _provider  = "deterministic";
+    private bool               _isRunning;
+    private string?            _error;
+    private DataAnalysisResult? _result;
+
+    private async Task RunAsync()
+    {
+        _error     = null;
+        _result    = null;
+        _isRunning = true;
+
+        try
+        {
+            var request = new DataAnalysisRequest
+            {
+                SheetPreview     = Preview,
+                TableSchema      = Schema,
+                ValidationResult = Validation,
+            };
+
+            var service = AnalysisFactory.Create(_provider);
+            _result = await service.AnalyzeAsync(request);
+            await OnAnalysisCompleted.InvokeAsync(_result);
+        }
+        catch (Exception ex)
+        {
+            _error = $"Analysis failed: {ex.Message}";
+        }
+        finally
+        {
+            _isRunning = false;
+        }
+    }
+
+    private static string SeverityClass(string severity) =>
+        severity.ToUpperInvariant() switch
+        {
+            "CRITICAL" => "critical",
+            "WARNING"  => "warning",
+            _          => "info",
+        };
+
+    private static string FormatCategory(string category) =>
+        category switch
+        {
+            "CandidateKey"            => "Candidate Key",
+            "DataQuality"             => "Data Quality",
+            "NormalizationOpportunity"=> "Normalization",
+            "DuplicateRisk"           => "Duplicate Risk",
+            "NullableRisk"            => "Nullable Risk",
+            _                         => category,
+        };
+}
